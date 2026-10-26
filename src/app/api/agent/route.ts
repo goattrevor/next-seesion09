@@ -3,9 +3,12 @@ import { MAX_PROMPT_LENGTH } from "@/lib/shared";
 import { AgentRunError, runAgent } from "@/agent/runAgent";
 
 export const runtime = "nodejs";
+/* 웹 조사 3회가 포함되어 1~3분 걸릴 수 있습니다. Vercel 배포 시 함수 실행 시간 상한을 늘립니다. */
+export const maxDuration = 300;
 
 const WINDOW_MS = 60_000;
-const REQUESTS_PER_WINDOW = 8;
+/* 한 번 실행에 웹 검색 비용이 들어가므로 기존 8회에서 줄였습니다. */
+const REQUESTS_PER_WINDOW = 3;
 const buckets = new Map<string, { startedAt: number; count: number }>();
 
 function isRateLimited(request: Request) {

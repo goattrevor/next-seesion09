@@ -1,4 +1,4 @@
-# Session 09 · Agent Lab
+# Session 09 · 아이디어 검증 에이전트
 
 이 레포는 LLM이 도구를 선택하고, 우리 코드가 도구를 실행한 뒤, 결과를 다시 LLM에 전달하는 흐름을 보여주는 실습 템플릿입니다.
 
@@ -15,10 +15,10 @@
 ## 파일 위치
 
 - `src/agent/`: 최대 단계 수를 포함한 에이전트 실행 루프
-- `src/tools/`: `search_ideas`, `get_market_info`, `save_report`
+- `src/tools/`: `webResearch`(search_similar_cases · search_competitors · research_market), `save_report`
 - `src/config/`: 모델 및 도구 설명
 - `src/app/api/agent/route.ts`: 요청 검증과 HTTP 응답
 - `supabase/`: 데이터베이스 구조와 데모 시드
 - `scripts/check-env.mjs`: 필요한 환경변수의 존재 확인
 
-기본 데모 순서는 `search_ideas` → `get_market_info` → `save_report`입니다. 최대 실행 횟수는 4회이며 루프를 늘리기 전에 비용과 종료 조건을 확인하세요.
+기본 순서는 `search_similar_cases` → `search_competitors` → `research_market` → `save_report`입니다. 순서는 서버에서도 강제합니다. 최대 실행 횟수는 6회이며, 웹 검색 비용이 들기 때문에 루프를 늘리기 전에 비용과 종료 조건을 확인하세요.

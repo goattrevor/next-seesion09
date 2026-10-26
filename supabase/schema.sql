@@ -1,23 +1,7 @@
--- Session 09 에이전트 실습용 스키마
--- 새 Supabase 프로젝트의 SQL Editor에서 먼저 실행하세요. 기존 테이블은 변경하지 않습니다.
+-- Session 09 · 아이디어 검증 에이전트 스키마
+-- Supabase SQL Editor에서 실행하세요. 기존 테이블은 지우지 않고 필요한 컬럼만 추가합니다.
+-- (이전 실습의 ideas, market_signals 테이블은 더 이상 쓰지 않지만 남겨 두어도 됩니다.)
 begin;
-
-create table if not exists public.ideas (
-  id text primary key,
-  name text not null,
-  category text not null,
-  description text not null,
-  tags text[] not null default '{}'
-);
-
-create table if not exists public.market_signals (
-  id text primary key,
-  category text not null,
-  title text not null,
-  insight text not null,
-  source_label text not null,
-  sample_as_of date not null
-);
 
 create table if not exists public.agent_reports (
   id uuid primary key default gen_random_uuid(),
@@ -28,19 +12,19 @@ create table if not exists public.agent_reports (
   created_at timestamptz not null default now()
 );
 
-alter table public.ideas enable row level security;
-alter table public.market_signals enable row level security;
+-- 검증 리포트 구조화 컬럼
+alter table public.agent_reports add column if not exists similar_cases jsonb not null default '[]'::jsonb;
+alter table public.agent_reports add column if not exists competitors jsonb not null default '[]'::jsonb;
+alter table public.agent_reports add column if not exists market jsonb not null default '{}'::jsonb;
+alter table public.agent_reports add column if not exists sources jsonb not null default '[]'::jsonb;
+
 alter table public.agent_reports enable row level security;
 
-revoke all on public.ideas, public.market_signals, public.agent_reports from public, anon, authenticated;
+revoke all on public.agent_reports from public, anon, authenticated;
 grant usage on schema public to anon;
-grant select on public.ideas, public.market_signals to anon;
-grant insert (prompt, title, summary, findings) on public.agent_reports to anon;
+grant insert (prompt, title, summary, findings, similar_cases, competitors, market, sources)
+  on public.agent_reports to anon;
 
-drop policy if exists "Workshop can read ideas" on public.ideas;
-create policy "Workshop can read ideas" on public.ideas for select to anon using (true);
-drop policy if exists "Workshop can read market signals" on public.market_signals;
-create policy "Workshop can read market signals" on public.market_signals for select to anon using (true);
 drop policy if exists "Workshop can save reports" on public.agent_reports;
 create policy "Workshop can save reports" on public.agent_reports for insert to anon with check (true);
 

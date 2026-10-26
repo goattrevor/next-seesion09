@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Session 09 · Agent Lab",
-  description: "도구를 선택하고 실행하는 에이전트 실습 데모",
+  title: "아이디어 검증 에이전트",
+  description: "아이디어를 입력하면 유사 사례·경쟁사·시장을 조사해 검증 리포트를 작성하는 에이전트",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
