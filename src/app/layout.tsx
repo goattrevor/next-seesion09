@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "아이디어 검증 에이전트",
-  description: "아이디어를 입력하면 유사 사례·경쟁사·시장을 조사해 검증 리포트를 작성하는 에이전트",
+  title: "광고 모델 추천 에이전트",
+  description: "제품에 맞는 인스타그램·유튜브·틱톡 크리에이터를 찾아 순위를 매기는 에이전트",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

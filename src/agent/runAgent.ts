@@ -1,17 +1,21 @@
 import "server-only";
 import OpenAI from "openai";
-import { AGENT_INSTRUCTIONS, MAX_OUTPUT_TOKENS, MODEL, type ResearchFocus } from "@/config/demo";
-import { MAX_STEPS } from "@/lib/shared";
-import type { AgentRunResult, AgentStep, ToolContext, ValidationReport } from "@/lib/types";
+import { AGENT_INSTRUCTIONS, MAX_OUTPUT_TOKENS, MODEL } from "@/config/demo";
+import { MAX_STEPS, MIN_FOLLOWERS, PLATFORMS, SHORTLIST_SIZE } from "@/lib/shared";
+import type { AgentRunResult, AgentStep, Platform, RankedCreator, ToolContext } from "@/lib/types";
 import { toolDefinitions } from "@/tools/definitions";
-import { saveReport } from "@/tools/saveReport";
-import { webResearch } from "@/tools/webResearch";
+import { getCreatorStats } from "@/tools/getCreatorStats";
+import { saveShortlist } from "@/tools/saveShortlist";
+import { searchCreators } from "@/tools/searchCreators";
 
 export class AgentRunError extends Error {
   constructor(message: string, public readonly steps: AgentStep[]) {
     super(message);
   }
 }
+
+/* 지표를 확인할 수 있는 후보 수 상한 (웹 검색 비용 제한) */
+const MAX_CHECKED_CREATORS = 10;
 
 function readString(value: unknown, key: string, max = 800): string {
   if (!value || typeof value !== "object" || !(key in value)) {
@@ -24,38 +28,31 @@ function readString(value: unknown, key: string, max = 800): string {
   return result.trim();
 }
 
-/* 객체 배열 인자를 검증합니다. 모든 필드는 비어 있지 않은 문자열이어야 합니다. */
-function readRecordList<K extends string>(
-  value: unknown,
-  key: string,
-  fields: readonly K[],
-  min: number,
-  max: number,
-): Record<K, string>[] {
-  const list = value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
-  if (!Array.isArray(list) || list.length < min || list.length > max) {
-    throw new Error(`${key}는 ${min}~${max}개 항목이어야 합니다.`);
+function readPlatform(value: unknown): Platform {
+  const platform = readString(value, "platform", 20);
+  if (!(PLATFORMS as readonly string[]).includes(platform)) {
+    throw new Error(`platform은 ${PLATFORMS.join(", ")} 중 하나여야 합니다.`);
   }
-  return list.map((item, index) => {
-    if (!item || typeof item !== "object") throw new Error(`${key}[${index}] 형식이 올바르지 않습니다.`);
-    const record = {} as Record<K, string>;
-    for (const field of fields) record[field] = readString(item, field, 400);
-    return record;
-  });
+  return platform as Platform;
 }
 
-/* 함수 도구 이름 → 웹 조사 주제. 세 도구는 같은 서버 함수를 다른 프롬프트로 실행합니다. */
-const RESEARCH_TOOLS: Record<string, ResearchFocus> = {
-  search_similar_cases: "similar_cases",
-  search_competitors: "competitors",
-  research_market: "market",
-};
+/* "@Creator_ID/" → "creator_id". 같은 사람을 같은 키로 찾기 위한 정규화입니다. */
+function creatorKey(platform: Platform, handle: string) {
+  return `${platform}:${handle.trim().replace(/^@/, "").replace(/\/+$/, "").toLowerCase()}`;
+}
+
+/*
+ * 모델이 고칠 수 있는 규칙 위반은 실행을 멈추지 않고 도구 결과로 돌려줍니다.
+ * 루프는 그대로 두고, 모델이 다음 라운드에서 다시 시도하게 합니다.
+ */
+function reject(reason: string) {
+  return { value: { ok: false, error: reason }, input: "규칙 검증", output: `거절: ${reason}` };
+}
 
 const STEP_LABELS: Record<string, string> = {
-  search_similar_cases: "유사 사례 조사",
-  search_competitors: "경쟁사 조사",
-  research_market: "시장 규모·타깃 조사",
-  save_report: "리포트 저장",
+  search_creators: "후보 검색",
+  get_creator_stats: "지표 확인",
+  save_shortlist: "추천 리스트 저장",
 };
 
 async function executeTool(
@@ -71,43 +68,100 @@ async function executeTool(
     throw new Error("도구 인자를 JSON으로 읽지 못했습니다.");
   }
 
-  const focus = RESEARCH_TOOLS[name];
-  if (focus) {
-    /* 조사 순서를 서버에서도 강제합니다: 유사 사례 → 경쟁사 → 시장 */
-    if (focus === "competitors" && !context.hasSimilarCases) throw new Error("먼저 search_similar_cases를 호출하세요.");
-    if (focus === "market" && !context.hasCompetitors) throw new Error("먼저 search_competitors를 호출하세요.");
-    const idea = readString(args, "idea", 300);
-    const result = await webResearch(focus, idea);
+  if (name === "search_creators") {
+    const platform = readPlatform(args);
+    const product = readString(args, "product", 300);
+    const rawKeywords = (args as { keywords?: unknown }).keywords;
+    if (!Array.isArray(rawKeywords) || rawKeywords.length < 1 || rawKeywords.length > 5
+      || rawKeywords.some((item) => typeof item !== "string" || !item.trim() || item.length > 40)) {
+      throw new Error("keywords는 1~5개의 40자 이내 단어여야 합니다.");
+    }
+    const keywords = (rawKeywords as string[]).map((item) => item.trim());
+    const result = await searchCreators(platform, product, keywords);
     for (const source of result.sources) context.sources.set(source.url, source);
-    if (focus === "similar_cases") context.hasSimilarCases = true;
-    if (focus === "competitors") context.hasCompetitors = true;
-    if (focus === "market") context.hasMarket = true;
-    return { value: result, input: idea, output: `웹 조사를 마쳤습니다. 출처 ${result.sources.length}개` };
+    context.searchedPlatforms.add(platform);
+    const found = "count" in result ? `후보 ${result.count}명 (YouTube API)` : `웹 검색 완료, 출처 ${result.sources.length}개`;
+    return { value: result, input: `${platform} · ${keywords.join(", ")}`, output: found };
   }
 
-  if (name === "save_report") {
-    /* 목표: 리포트 1건을 저장하면 종료합니다. 두 번째 저장은 막습니다. */
-    if (context.report) throw new Error("리포트는 이미 저장했습니다. 최종 요약만 답하세요.");
-    if (!context.hasSimilarCases || !context.hasCompetitors || !context.hasMarket) {
-      throw new Error("유사 사례·경쟁사·시장 조사를 먼저 실행하세요.");
+  if (name === "get_creator_stats") {
+    const platform = readPlatform(args);
+    const handle = readString(args, "handle", 100);
+    if (!context.searchedPlatforms.has(platform)) {
+      return reject(`먼저 search_creators로 ${platform} 후보를 찾으세요.`);
     }
-    const marketArgs = args && typeof args === "object" ? (args as Record<string, unknown>).market : undefined;
-    const report: ValidationReport = {
-      title: readString(args, "title", 120),
+    const key = creatorKey(platform, handle);
+    const cached = context.checkedCreators.get(key);
+    if (cached) return { value: cached, input: `${platform} ${handle}`, output: "이미 확인한 후보입니다." };
+    if (context.checkedCreators.size >= MAX_CHECKED_CREATORS) {
+      return reject(`지표 확인은 최대 ${MAX_CHECKED_CREATORS}명까지입니다. 확인한 후보 중에서 순위를 정하세요.`);
+    }
+    const { stats, sources } = await getCreatorStats(platform, handle);
+    for (const source of sources) context.sources.set(source.url, source);
+    context.checkedCreators.set(key, stats);
+    /* API가 돌려준 정식 핸들로도 찾을 수 있게 같은 값을 한 번 더 등록합니다. */
+    context.checkedCreators.set(creatorKey(platform, stats.handle), stats);
+    const followers = stats.followers === null ? "팔로워 확인 불가" : `팔로워 ${stats.followers.toLocaleString("ko-KR")}`;
+    return {
+      value: stats,
+      input: `${platform} ${handle}`,
+      output: stats.found ? `${stats.name ?? handle} · ${followers}` : "계정을 찾지 못했습니다.",
+    };
+  }
+
+  if (name === "save_shortlist") {
+    /* 목표: 추천 리스트 1건을 저장하면 종료합니다. */
+    if (context.shortlist) return reject("추천 리스트는 이미 저장했습니다. 최종 요약만 답하세요.");
+
+    const rawCreators = (args as { creators?: unknown }).creators;
+    if (!Array.isArray(rawCreators) || rawCreators.length !== SHORTLIST_SIZE) {
+      return reject(`creators는 정확히 ${SHORTLIST_SIZE}명이어야 합니다.`);
+    }
+
+    const creators: RankedCreator[] = [];
+    const seen = new Set<string>();
+    for (const item of rawCreators) {
+      const platform = readPlatform(item);
+      const handle = readString(item, "handle", 100);
+      const rank = (item as { rank?: unknown }).rank;
+      const key = creatorKey(platform, handle);
+      const stats = context.checkedCreators.get(key);
+      if (!stats || !stats.found) return reject(`${platform} ${handle}은 get_creator_stats로 확인되지 않았습니다.`);
+      if (seen.has(key)) return reject(`${handle}이 두 번 들어 있습니다.`);
+      if (stats.followers !== null && stats.followers < MIN_FOLLOWERS) {
+        return reject(`${handle}의 팔로워가 ${MIN_FOLLOWERS.toLocaleString("ko-KR")}명 미만입니다. 다른 후보로 바꾸세요.`);
+      }
+      seen.add(key);
+      creators.push({
+        rank: typeof rank === "number" ? rank : -1,
+        platform,
+        handle: stats.handle,
+        /* 이름·URL·지표는 모델이 쓴 값이 아니라 확인된 값만 씁니다. */
+        name: stats.name ?? stats.handle,
+        url: stats.url,
+        followers: stats.followers,
+        average_views: stats.average_views,
+        fit_topic: readString(item, "fit_topic", 400),
+        fit_audience: readString(item, "fit_audience", 400),
+        caution: readString(item, "caution", 300),
+      });
+    }
+    const ranks = creators.map((creator) => creator.rank).sort((a, b) => a - b);
+    if (ranks.some((rank, index) => rank !== index + 1)) {
+      return reject(`rank는 1~${SHORTLIST_SIZE}가 한 번씩 들어가야 합니다.`);
+    }
+    creators.sort((a, b) => a.rank - b.rank);
+
+    const shortlist = {
+      product: readString(args, "product", 300),
+      target_customer: readString(args, "target_customer", 300),
       summary: readString(args, "summary", 1000),
-      similar_cases: readRecordList(args, "similar_cases", ["name", "region", "description", "takeaway"] as const, 1, 6),
-      competitors: readRecordList(args, "competitors", ["name", "type", "offering", "strength", "weakness"] as const, 1, 8),
-      market: {
-        size: readString(marketArgs, "size", 400),
-        growth: readString(marketArgs, "growth", 400),
-        target_customers: readString(marketArgs, "target_customers", 600),
-      },
-      /* 모델이 쓴 URL이 아니라 웹 조사 도구가 실제로 반환한 출처만 저장합니다. */
+      creators,
       sources: [...context.sources.values()].slice(0, 20),
     };
-    const result = await saveReport({ prompt, ...report });
-    context.report = report;
-    return { value: result, input: report.title, output: result.message };
+    const result = await saveShortlist({ prompt, ...shortlist });
+    context.shortlist = shortlist;
+    return { value: result, input: `${SHORTLIST_SIZE}명 순위`, output: result.message };
   }
 
   throw new Error(`등록되지 않은 도구입니다: ${name}`);
@@ -120,11 +174,10 @@ export async function runAgent(prompt: string): Promise<AgentRunResult> {
   const client = new OpenAI({ apiKey, timeout: 90_000, maxRetries: 0 });
   const steps: AgentStep[] = [];
   const context: ToolContext = {
-    hasSimilarCases: false,
-    hasCompetitors: false,
-    hasMarket: false,
+    searchedPlatforms: new Set(),
+    checkedCreators: new Map(),
     sources: new Map(),
-    report: null,
+    shortlist: null,
   };
   let conversation: OpenAI.Responses.ResponseInputItem[] = [{ role: "user", content: prompt }];
   let reportSaved = false;
@@ -155,7 +208,7 @@ export async function runAgent(prompt: string): Promise<AgentRunResult> {
     if (calls.length === 0) {
       const reply = response.output_text?.trim();
       if (!reply) throw new AgentRunError("에이전트 응답이 비어 있습니다.", steps);
-      return { reply, steps, reportSaved, report: context.report };
+      return { reply, steps, reportSaved, shortlist: context.shortlist };
     }
 
     const outputs: OpenAI.Responses.ResponseInputItem[] = [];
@@ -164,7 +217,7 @@ export async function runAgent(prompt: string): Promise<AgentRunResult> {
       try {
         const result = await executeTool(call.name, call.arguments, prompt, context);
         steps.push({ name: call.name, label: labels[call.name] ?? call.name, input: result.input, output: result.output, status: "done" });
-        if (call.name === "save_report") reportSaved = true;
+        if (call.name === "save_shortlist" && context.shortlist) reportSaved = true;
         outputs.push({ type: "function_call_output", call_id: call.call_id, output: JSON.stringify(result.value) });
       } catch (error) {
         const message = error instanceof Error ? error.message : "도구 실행에 실패했습니다.";

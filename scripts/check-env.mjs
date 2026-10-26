@@ -26,4 +26,7 @@ if (!/^https:\/\//.test(values.NEXT_PUBLIC_SUPABASE_URL)) {
   console.error("NEXT_PUBLIC_SUPABASE_URL은 https:// 주소여야 합니다.");
   process.exit(1);
 }
+if (!values.YOUTUBE_API_KEY) {
+  console.log("참고: YOUTUBE_API_KEY가 없어 유튜브도 웹 검색으로 조회합니다. (선택 사항)");
+}
 console.log("필수 환경변수가 설정되어 있습니다. 비밀값은 표시하지 않았습니다.");

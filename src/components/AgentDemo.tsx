@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { DEMO_PROMPT, MAX_PROMPT_LENGTH, MAX_STEPS } from "@/lib/shared";
-import type { AgentRunResult, AgentStep, ValidationReport } from "@/lib/types";
+import { DEMO_PROMPT, MAX_PROMPT_LENGTH, MAX_STEPS, SHORTLIST_SIZE } from "@/lib/shared";
+import type { AgentRunResult, AgentStep, Platform, Shortlist } from "@/lib/types";
 
 type RunState = "idle" | "running" | "done" | "error";
 
@@ -13,7 +13,7 @@ export default function AgentDemo() {
   const [reply, setReply] = useState("");
   const [error, setError] = useState("");
   const [reportSaved, setReportSaved] = useState(false);
-  const [report, setReport] = useState<ValidationReport | null>(null);
+  const [shortlist, setShortlist] = useState<Shortlist | null>(null);
 
   async function run(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -23,7 +23,7 @@ export default function AgentDemo() {
     setReply("");
     setError("");
     setReportSaved(false);
-    setReport(null);
+    setShortlist(null);
     try {
       const response = await fetch("/api/agent", {
         method: "POST",
@@ -40,7 +40,7 @@ export default function AgentDemo() {
         throw new Error("에이전트 응답이 비어 있습니다.");
       setReply(data.reply);
       setReportSaved(Boolean(data.reportSaved));
-      setReport(data.report ?? null);
+      setShortlist(data.shortlist ?? null);
       setState("done");
     } catch (cause) {
       setError(
@@ -60,15 +60,15 @@ export default function AgentDemo() {
 
       <section className="hero" id="top">
         <h1>
-          아이디어를 넣으면,
+          제품을 넣으면,
           <br />
-          <em>시장을 조사해 검증하는</em> 에이전트
+          <em>어울리는 광고 모델을 찾는</em> 에이전트
         </h1>
         <p className="lede">
-          에이전트가 웹을 검색해 유사 사례, 진입 시 경쟁사, 시장 규모와
-          타깃을 조사하고
-          <br className="desktop-break" /> 출처가 달린 검증 리포트로 정리해
-          저장합니다.
+          에이전트가 인스타그램·유튜브·틱톡에서 팔로워 1만 이상 크리에이터를
+          찾고 지표를 확인해
+          <br className="desktop-break" /> 제품과 잘 맞는 순서로 5명의 순위를
+          매겨 저장합니다.
         </p>
       </section>
 
@@ -76,14 +76,14 @@ export default function AgentDemo() {
         <div className="run-card">
           <div className="card-heading">
             <div>
-              <h2>아이디어 검증 요청하기</h2>
+              <h2>광고 모델 찾기</h2>
             </div>
             <span className="step-limit">
               MAX_STEPS <b>{MAX_STEPS}</b>
             </span>
           </div>
           <form onSubmit={run}>
-            <label htmlFor="prompt">검증할 아이디어를 입력하세요</label>
+            <label htmlFor="prompt">제품 설명과 타깃 고객을 입력하세요</label>
             <textarea
               id="prompt"
               value={prompt}
@@ -113,8 +113,9 @@ export default function AgentDemo() {
             </div>
           </form>
           <p className="data-note">
-            웹 조사 3회가 포함되어 1~3분 정도 걸립니다. 수치는 반드시 출처를
-            열어 직접 확인하세요.
+            웹 검색이 여러 번 포함되어 2~5분 정도 걸립니다. 에이전트는
+            크리에이터에게 연락하지 않으며, 지표는 반드시 프로필을 열어 직접
+            확인하세요.
           </p>
         </div>
 
@@ -149,9 +150,9 @@ export default function AgentDemo() {
               <div className="trace-empty">
                 <span className="empty-orbit pulse">◎</span>
                 <p>
-                  아이디어를 정리하고
+                  제품을 읽고 찾을
                   <br />
-                  조사를 시작하고 있어요…
+                  크리에이터를 고르고 있어요…
                 </p>
               </div>
             )}
@@ -204,102 +205,83 @@ export default function AgentDemo() {
         </aside>
       </section>
 
-      {report && <ReportView report={report} />}
+      {shortlist && <ShortlistView shortlist={shortlist} />}
 
       <footer></footer>
     </main>
   );
 }
 
-/* 검증 리포트: 유사 사례 · 경쟁사 · 시장 규모와 타깃 · 출처 */
-function ReportView({ report }: { report: ValidationReport }) {
+/* 추천 리스트: 1~5위 크리에이터 · 적합 근거 · 확인된 지표 · 출처 */
+const PLATFORM_NAME: Record<Platform, string> = {
+  instagram: "Instagram",
+  youtube: "YouTube",
+  tiktok: "TikTok",
+};
+
+function formatCount(value: number | null) {
+  if (value === null) return "확인 불가";
+  if (value >= 10_000) return `${(value / 10_000).toFixed(value >= 100_000 ? 0 : 1)}만`;
+  return value.toLocaleString("ko-KR");
+}
+
+function ShortlistView({ shortlist }: { shortlist: Shortlist }) {
   return (
-    <section className="report-card" aria-label="검증 리포트">
-      <p className="report-kicker">VALIDATION REPORT</p>
-      <h2>{report.title}</h2>
-      <p className="report-summary">{report.summary}</p>
+    <section className="report-card" aria-label="광고 모델 추천 리스트">
+      <p className="report-kicker">CREATOR SHORTLIST · TOP {SHORTLIST_SIZE}</p>
+      <h2>{shortlist.product}</h2>
+      <p className="report-target">타깃 · {shortlist.target_customer}</p>
+      <p className="report-summary">{shortlist.summary}</p>
 
-      <div className="report-section">
-        <h3>
-          <span>01</span> 유사 사례
-        </h3>
-        <div className="case-grid">
-          {report.similar_cases.map((item, index) => (
-            <article className="case-item" key={`${item.name}-${index}`}>
-              <div className="case-head">
-                <strong>{item.name}</strong>
-                <em>{item.region}</em>
+      <ol className="rank-list">
+        {shortlist.creators.map((creator) => (
+          <li className="rank-item" key={`${creator.platform}-${creator.handle}`}>
+            <div className="rank-number">{creator.rank}</div>
+            <div className="rank-body">
+              <div className="rank-head">
+                <div>
+                  <strong>{creator.name}</strong>
+                  {creator.url ? (
+                    <a href={creator.url} target="_blank" rel="noreferrer noopener">
+                      {creator.handle}
+                    </a>
+                  ) : (
+                    <span>{creator.handle}</span>
+                  )}
+                </div>
+                <em className={`platform-chip ${creator.platform}`}>{PLATFORM_NAME[creator.platform]}</em>
               </div>
-              <p>{item.description}</p>
-              <small>교훈 · {item.takeaway}</small>
-            </article>
-          ))}
-        </div>
-      </div>
+              <dl className="rank-stats">
+                <div>
+                  <dt>팔로워</dt>
+                  <dd>{formatCount(creator.followers)}</dd>
+                </div>
+                <div>
+                  <dt>평균 조회수</dt>
+                  <dd>{formatCount(creator.average_views)}</dd>
+                </div>
+              </dl>
+              <p>
+                <b>콘텐츠 적합</b> {creator.fit_topic}
+              </p>
+              <p>
+                <b>타깃 적합</b> {creator.fit_audience}
+              </p>
+              {creator.caution && creator.caution !== "없음" && (
+                <small>주의 · {creator.caution}</small>
+              )}
+            </div>
+          </li>
+        ))}
+      </ol>
 
-      <div className="report-section">
-        <h3>
-          <span>02</span> 진입 시 경쟁사
-        </h3>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>경쟁사</th>
-                <th>유형</th>
-                <th>제공 가치</th>
-                <th>강점</th>
-                <th>약점</th>
-              </tr>
-            </thead>
-            <tbody>
-              {report.competitors.map((item, index) => (
-                <tr key={`${item.name}-${index}`}>
-                  <td>
-                    <strong>{item.name}</strong>
-                  </td>
-                  <td>
-                    <span className={`type-chip ${item.type === "직접" ? "direct" : ""}`}>
-                      {item.type}
-                    </span>
-                  </td>
-                  <td>{item.offering}</td>
-                  <td>{item.strength}</td>
-                  <td>{item.weakness}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="report-section">
-        <h3>
-          <span>03</span> 시장 규모 · 타깃
-        </h3>
-        <dl className="market-grid">
-          <div>
-            <dt>시장 규모</dt>
-            <dd>{report.market.size}</dd>
-          </div>
-          <div>
-            <dt>성장률 · 추세</dt>
-            <dd>{report.market.growth}</dd>
-          </div>
-          <div>
-            <dt>핵심 타깃</dt>
-            <dd>{report.market.target_customers}</dd>
-          </div>
-        </dl>
-      </div>
-
-      {report.sources.length > 0 && (
+      {shortlist.sources.length > 0 && (
         <div className="report-section">
           <h3>
-            <span>04</span> 출처
+            <span>SRC</span> 출처
           </h3>
           <ol className="source-list">
-            {report.sources.map((source) => (
+            {shortlist.sources.map((source) => (
               <li key={source.url}>
                 <a href={source.url} target="_blank" rel="noreferrer noopener">
                   {source.title}

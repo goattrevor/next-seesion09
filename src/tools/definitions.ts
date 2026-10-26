@@ -1,87 +1,80 @@
 import type OpenAI from "openai";
+import { PLATFORMS, SHORTLIST_SIZE } from "@/lib/shared";
 
-const ideaParameters = {
-  type: "object",
-  properties: { idea: { type: "string", description: "검증할 아이디어를 한 문장으로 정리한 것" } },
-  required: ["idea"],
-  additionalProperties: false,
-};
+const platform = { type: "string", enum: [...PLATFORMS], description: "조회할 플랫폼" };
 
 export const toolDefinitions: OpenAI.Responses.FunctionTool[] = [
   {
     type: "function",
-    name: "search_similar_cases",
-    description: "웹 검색으로 국내외 유사 서비스·사례(성공·실패 포함)를 조사합니다. 첫 번째로 호출하세요.",
-    strict: true,
-    parameters: ideaParameters,
-  },
-  {
-    type: "function",
-    name: "search_competitors",
-    description: "웹 검색으로 이 아이디어가 한국 시장에 진입할 때의 직접·간접 경쟁사를 조사합니다. search_similar_cases 다음에 호출하세요.",
-    strict: true,
-    parameters: ideaParameters,
-  },
-  {
-    type: "function",
-    name: "research_market",
-    description: "웹 검색으로 시장 규모, 성장률, 타깃 고객을 조사합니다. search_competitors 다음에 호출하세요.",
-    strict: true,
-    parameters: ideaParameters,
-  },
-  {
-    type: "function",
-    name: "save_report",
-    description: "세 조사 결과를 바탕으로 검증 리포트를 Supabase에 저장합니다. 출처는 서버가 조사 결과에서 자동으로 붙입니다. 마지막 도구로 호출하세요.",
+    name: "search_creators",
+    description:
+      "한 플랫폼에서 제품 광고에 어울리는 국내 크리에이터 후보를 새로 찾아야 할 때 사용합니다. "
+      + "instagram, youtube, tiktok마다 따로 호출하고, 쓸 만한 후보가 부족하면 키워드를 바꿔 다시 호출합니다. 읽기 전용.",
     strict: true,
     parameters: {
       type: "object",
       properties: {
-        title: { type: "string", description: "리포트 제목" },
-        summary: { type: "string", description: "검증 결론 요약 2~4문장" },
-        similar_cases: {
+        platform,
+        product: { type: "string", description: "제품을 한 문장으로 정리한 것" },
+        keywords: {
           type: "array",
-          description: "유사 사례 1~6개",
-          items: {
-            type: "object",
-            properties: {
-              name: { type: "string" },
-              region: { type: "string", enum: ["국내", "해외"] },
-              description: { type: "string", description: "무엇을 하는 서비스인지와 현재 상태" },
-              takeaway: { type: "string", description: "이 아이디어에 주는 교훈" },
-            },
-            required: ["name", "region", "description", "takeaway"],
-            additionalProperties: false,
-          },
-        },
-        competitors: {
-          type: "array",
-          description: "진입 시 경쟁사 1~8개",
-          items: {
-            type: "object",
-            properties: {
-              name: { type: "string" },
-              type: { type: "string", enum: ["직접", "간접"] },
-              offering: { type: "string", description: "핵심 제공 가치와 수익 모델" },
-              strength: { type: "string" },
-              weakness: { type: "string" },
-            },
-            required: ["name", "type", "offering", "strength", "weakness"],
-            additionalProperties: false,
-          },
-        },
-        market: {
-          type: "object",
-          properties: {
-            size: { type: "string", description: "시장 규모 (기준 연도·출처 기관 포함)" },
-            growth: { type: "string", description: "성장률 또는 추세 (기준 연도·출처 기관 포함)" },
-            target_customers: { type: "string", description: "핵심 타깃 고객과 그 근거" },
-          },
-          required: ["size", "growth", "target_customers"],
-          additionalProperties: false,
+          items: { type: "string" },
+          description: "크리에이터 콘텐츠 주제를 찾을 검색 키워드 1~5개 (예: 비건 뷰티, 민감성 피부)",
         },
       },
-      required: ["title", "summary", "similar_cases", "competitors", "market"],
+      required: ["platform", "product", "keywords"],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: "function",
+    name: "get_creator_stats",
+    description:
+      "검색으로 찾은 후보를 순위에 넣기 전, 팔로워·평균 조회수·최근 콘텐츠 주제를 확인해야 할 때 사용합니다. "
+      + "순위에 넣을 후보는 반드시 이 도구로 먼저 확인해야 합니다. 읽기 전용.",
+    strict: true,
+    parameters: {
+      type: "object",
+      properties: {
+        platform,
+        handle: { type: "string", description: "검색 결과에 나온 핸들 (예: @creator_id)" },
+      },
+      required: ["platform", "handle"],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: "function",
+    name: "save_shortlist",
+    description:
+      `지표를 확인한 후보 중 상위 ${SHORTLIST_SIZE}명의 순위가 확정됐을 때 한 번만 호출해 추천 리스트를 저장합니다. `
+      + "팔로워·조회수·URL·출처는 서버가 확인된 값으로 채우므로 적지 않습니다. 쓰기 작업.",
+    strict: true,
+    parameters: {
+      type: "object",
+      properties: {
+        product: { type: "string", description: "제품 한 문장 요약" },
+        target_customer: { type: "string", description: "타깃 고객 한 문장 요약" },
+        summary: { type: "string", description: "추천 결과와 순위 근거 요약 2~4문장" },
+        creators: {
+          type: "array",
+          description: `정확히 ${SHORTLIST_SIZE}명, rank 1부터 순서대로`,
+          items: {
+            type: "object",
+            properties: {
+              rank: { type: "integer", description: `1~${SHORTLIST_SIZE}` },
+              platform,
+              handle: { type: "string", description: "get_creator_stats로 확인한 핸들" },
+              fit_topic: { type: "string", description: "콘텐츠 주제가 제품과 맞는 근거" },
+              fit_audience: { type: "string", description: "시청자층이 타깃 고객과 맞는 근거. 모르면 확인 불가" },
+              caution: { type: "string", description: "주의할 점 (경쟁 브랜드 협업, 확인 불가 지표 등). 없으면 없음" },
+            },
+            required: ["rank", "platform", "handle", "fit_topic", "fit_audience", "caution"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["product", "target_customer", "summary", "creators"],
       additionalProperties: false,
     },
   },
