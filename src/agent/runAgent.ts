@@ -86,6 +86,8 @@ async function executeTool(
   }
 
   if (name === "save_report") {
+    /* 목표: 리포트 1건을 저장하면 종료합니다. 두 번째 저장은 막습니다. */
+    if (context.report) throw new Error("리포트는 이미 저장했습니다. 최종 요약만 답하세요.");
     if (!context.hasSimilarCases || !context.hasCompetitors || !context.hasMarket) {
       throw new Error("유사 사례·경쟁사·시장 조사를 먼저 실행하세요.");
     }
